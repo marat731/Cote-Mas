@@ -51,9 +51,9 @@ export async function POST(request: NextRequest) {
 
   const genAI = new GoogleGenerativeAI(apiKey);
 
-  // gemini-2.0-flash-exp-image-generation supports multimodal input + image output
+  // gemini-3-pro-image-preview supports multimodal input + image output
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash-exp-image-generation",
+    model: "gemini-3-pro-image-preview",
     generationConfig: {
       // @ts-expect-error — responseModalities is a valid parameter for this model
       responseModalities: ["Text", "Image"],
