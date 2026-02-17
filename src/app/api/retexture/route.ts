@@ -1,19 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
+import fs from "fs";
+import path from "path";
 
-// The predefined retexturing style for the Côté Mas brand.
-// Users never need to write this — it is always applied automatically.
-const RETEXTURE_PROMPT = `You are a fine-art photo editor working exclusively for Côté Mas, a prestigious Provençal wine estate in the south of France.
-
-Your task is to retexture the supplied photograph so it feels like it belongs in the Côté Mas world. Apply the following treatment:
-
-• Warm golden-hour light — bathe the scene in the soft amber and rose-gold tones of a late-afternoon sun over the Languedoc hills
-• Painterly texture — add a subtle impressionistic brushstroke quality, as if the photo were gently translated into a watercolour or oil-pastel study
-• Colour palette — lean into cream, warm gold (#C4933F), dusty rose (#C8687A), Mediterranean blue (#3A6B8C), and sage green (#5B7A4E)
-• Atmosphere — introduce a faint haze or bokeh softness to convey warmth and languor, without obscuring the subject
-• Preserve composition — keep the original subjects, faces, and layout intact; only the texture, light, and colour grading should change
-
-Return ONLY the retextured image. Do not add text, watermarks, borders, or any other elements.`;
+const RETEXTURE_PROMPT =
+  "restylize this exact photograph in the painterly style of the attached image reference. Do not add words or text of any kind.";
 
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -69,10 +60,19 @@ export async function POST(request: NextRequest) {
     },
   });
 
+  const refImagePath = path.join(process.cwd(), "public", "style-reference.jpg");
+  const refImageData = fs.readFileSync(refImagePath).toString("base64");
+
   let result;
   try {
     result = await model.generateContent([
       { text: RETEXTURE_PROMPT },
+      {
+        inlineData: {
+          mimeType: "image/jpeg",
+          data: refImageData,
+        },
+      },
       {
         inlineData: {
           mimeType: file.type,
