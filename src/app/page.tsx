@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import Cropper from "react-easy-crop";
+import type { Area } from "react-easy-crop";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Stage = "idle" | "preview" | "processing" | "result" | "error";
+type Stage = "idle" | "crop" | "processing" | "result" | "error";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -21,6 +23,54 @@ const ACCEPTED = ["image/jpeg", "image/png", "image/webp"];
 
 function isValidImage(file: File) {
   return ACCEPTED.includes(file.type) && file.size <= 8 * 1024 * 1024;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+async function getCroppedCanvas(
+  imageSrc: string,
+  pixelCrop: Area
+): Promise<HTMLCanvasElement> {
+  const image = await loadImage(imageSrc);
+  const canvas = document.createElement("canvas");
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  );
+  return canvas;
+}
+
+async function compositeWithFrame(generatedDataURL: string): Promise<string> {
+  const [genImg, frameImg] = await Promise.all([
+    loadImage(generatedDataURL),
+    loadImage("/CoteMasFrame.png"),
+  ]);
+  const canvas = document.createElement("canvas");
+  canvas.width = frameImg.naturalWidth;
+  canvas.height = frameImg.naturalHeight;
+  const ctx = canvas.getContext("2d")!;
+  // Generated image fills the canvas behind the frame
+  ctx.drawImage(genImg, 0, 0, canvas.width, canvas.height);
+  // Frame sits on top, untouched
+  ctx.drawImage(frameImg, 0, 0);
+  return canvas.toDataURL("image/jpeg", 0.95);
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -123,11 +173,127 @@ function UploadZone({ onFile }: UploadZoneProps) {
           Drop your photograph here
         </p>
         <p className="text-sm text-cm-stone mt-1">
-          or <span className="text-cm-gold underline underline-offset-2">click to browse</span>
+          or{" "}
+          <span className="text-cm-gold underline underline-offset-2">
+            click to browse
+          </span>
         </p>
         <p className="text-xs text-cm-stone/70 mt-3">
           JPEG · PNG · WebP &nbsp;·&nbsp; up to 8 MB
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Crop view ────────────────────────────────────────────────────────────────
+
+interface CropViewProps {
+  src: string;
+  onConfirm: (blob: Blob, croppedDataURL: string) => void;
+  onCancel: () => void;
+}
+
+function CropView({ src, onConfirm, onCancel }: CropViewProps) {
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+  const [frameAspect, setFrameAspect] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    loadImage("/CoteMasFrame.png").then((img) => {
+      setFrameAspect(img.naturalWidth / img.naturalHeight);
+    });
+  }, []);
+
+  const onCropComplete = useCallback((_: Area, pixels: Area) => {
+    setCroppedAreaPixels(pixels);
+  }, []);
+
+  const handleConfirm = async () => {
+    if (!croppedAreaPixels) return;
+    setConfirming(true);
+    try {
+      const canvas = await getCroppedCanvas(src, croppedAreaPixels);
+      const dataURL = canvas.toDataURL("image/jpeg", 0.92);
+      const blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob(
+          (b) =>
+            b ? resolve(b) : reject(new Error("Canvas export failed")),
+          "image/jpeg",
+          0.92
+        )
+      );
+      onConfirm(blob, dataURL);
+    } catch {
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <div className="fade-up w-full space-y-5">
+      <div className="result-card overflow-hidden">
+        <div className="bg-cm-cream-dark px-4 py-2 border-b border-cm-cream-dark">
+          <p className="text-xs tracking-widest uppercase text-cm-stone font-sans">
+            Position your photograph
+          </p>
+        </div>
+
+        {/* Cropper area */}
+        <div className="relative w-full h-[420px] bg-black">
+          {frameAspect !== null ? (
+            <Cropper
+              image={src}
+              crop={crop}
+              zoom={zoom}
+              aspect={frameAspect}
+              onCropChange={setCrop}
+              onZoomChange={setZoom}
+              onCropComplete={onCropComplete}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <div className="spinner" />
+            </div>
+          )}
+        </div>
+
+        {/* Zoom slider */}
+        <div className="px-4 py-3 bg-cm-cream-dark flex items-center gap-3">
+          <span className="text-xs text-cm-stone uppercase tracking-wider shrink-0">
+            Zoom
+          </span>
+          <input
+            type="range"
+            min={1}
+            max={3}
+            step={0.01}
+            value={zoom}
+            onChange={(e) => setZoom(Number(e.target.value))}
+            className="flex-1 cursor-pointer"
+          />
+        </div>
+      </div>
+
+      <p className="text-xs text-cm-stone/60 text-center">
+        Drag to reposition · scroll or use the slider to zoom
+      </p>
+
+      <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <button
+          onClick={handleConfirm}
+          disabled={confirming || frameAspect === null}
+          className="btn-primary"
+        >
+          {confirming ? "Preparing…" : "Apply Côté Mas style"}
+        </button>
+        <button
+          onClick={onCancel}
+          className="px-8 py-3 rounded-full border border-cm-stone/30 text-cm-stone hover:bg-cm-stone/5 transition-all duration-200 active:scale-95"
+        >
+          Choose a different photo
+        </button>
       </div>
     </div>
   );
@@ -145,7 +311,7 @@ function ResultView({ original, retextured, onReset }: ResultProps) {
   const handleDownload = () => {
     const a = document.createElement("a");
     a.href = retextured;
-    a.download = "cote-mas-retextured.jpg";
+    a.download = "cote-mas-edition.jpg";
     a.click();
   };
 
@@ -196,46 +362,6 @@ function ResultView({ original, retextured, onReset }: ResultProps) {
   );
 }
 
-// ─── Preview + confirm ────────────────────────────────────────────────────────
-
-interface PreviewProps {
-  src: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}
-
-function PreviewView({ src, onConfirm, onCancel }: PreviewProps) {
-  return (
-    <div className="fade-up w-full space-y-5">
-      <div className="result-card overflow-hidden">
-        <div className="bg-cm-cream-dark px-4 py-2 border-b border-cm-cream-dark">
-          <p className="text-xs tracking-widest uppercase text-cm-stone font-sans">
-            Your photograph
-          </p>
-        </div>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
-          alt="Preview"
-          className="w-full object-contain max-h-[400px]"
-        />
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-3 justify-center">
-        <button onClick={onConfirm} className="btn-primary">
-          Apply Côté Mas style
-        </button>
-        <button
-          onClick={onCancel}
-          className="px-8 py-3 rounded-full border border-cm-stone/30 text-cm-stone hover:bg-cm-stone/5 transition-all duration-200 active:scale-95"
-        >
-          Choose a different photo
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Processing spinner ───────────────────────────────────────────────────────
 
 function ProcessingView() {
@@ -258,25 +384,23 @@ function ProcessingView() {
 
 export default function HomePage() {
   const [stage, setStage] = useState<Stage>("idle");
+  const [rawDataURL, setRawDataURL] = useState<string>("");
   const [originalDataURL, setOriginalDataURL] = useState<string>("");
   const [retexturedDataURL, setRetexturedDataURL] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
-  const fileRef = useRef<File | null>(null);
 
   const handleFile = async (file: File) => {
-    fileRef.current = file;
     const dataURL = await dataURLFromFile(file);
-    setOriginalDataURL(dataURL);
-    setStage("preview");
+    setRawDataURL(dataURL);
+    setStage("crop");
   };
 
-  const handleConfirm = async () => {
-    const file = fileRef.current;
-    if (!file) return;
-
+  const handleCropConfirm = async (blob: Blob, croppedDataURL: string) => {
+    setOriginalDataURL(croppedDataURL);
     setStage("processing");
     setErrorMessage("");
 
+    const file = new File([blob], "photo.jpg", { type: "image/jpeg" });
     const form = new FormData();
     form.append("image", file);
 
@@ -288,8 +412,9 @@ export default function HomePage() {
         throw new Error(data.error ?? "Retexturing failed.");
       }
 
-      const dataURL = `data:${data.mimeType};base64,${data.image}`;
-      setRetexturedDataURL(dataURL);
+      const generatedDataURL = `data:${data.mimeType};base64,${data.image}`;
+      const composited = await compositeWithFrame(generatedDataURL);
+      setRetexturedDataURL(composited);
       setStage("result");
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "Something went wrong.");
@@ -299,10 +424,10 @@ export default function HomePage() {
 
   const handleReset = () => {
     setStage("idle");
+    setRawDataURL("");
     setOriginalDataURL("");
     setRetexturedDataURL("");
     setErrorMessage("");
-    fileRef.current = null;
   };
 
   return (
@@ -323,7 +448,8 @@ export default function HomePage() {
         <LeafDivider />
         <p className="font-serif text-lg sm:text-xl text-cm-charcoal/70 max-w-md mx-auto leading-relaxed">
           Transform your photographs into warm, sun-drenched portraits
-          <br className="hidden sm:block" /> inspired by the vineyards of Provence.
+          <br className="hidden sm:block" /> inspired by the vineyards of
+          Provence.
         </p>
       </header>
 
@@ -331,10 +457,10 @@ export default function HomePage() {
       <main className="relative z-10 flex-1 flex flex-col items-center justify-start px-6 pb-20 pt-10 max-w-3xl mx-auto w-full">
         {stage === "idle" && <UploadZone onFile={handleFile} />}
 
-        {stage === "preview" && (
-          <PreviewView
-            src={originalDataURL}
-            onConfirm={handleConfirm}
+        {stage === "crop" && (
+          <CropView
+            src={rawDataURL}
+            onConfirm={handleCropConfirm}
             onCancel={handleReset}
           />
         )}
@@ -352,8 +478,18 @@ export default function HomePage() {
         {stage === "error" && (
           <div className="fade-up w-full text-center space-y-5">
             <div className="inline-flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-5 py-3 rounded-xl text-sm">
-              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+              <svg
+                className="w-4 h-4 shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"
+                />
               </svg>
               {errorMessage}
             </div>
@@ -367,7 +503,8 @@ export default function HomePage() {
       {/* ── Footer ── */}
       <footer className="relative z-10 text-center pb-8 px-6">
         <p className="text-xs text-cm-stone/50 tracking-wide">
-          © {new Date().getFullYear()} Domaines Paul Mas · Côté Mas · Pézenas, Languedoc
+          © {new Date().getFullYear()} Domaines Paul Mas · Côté Mas · Pézenas,
+          Languedoc
         </p>
       </footer>
     </div>
