@@ -2,7 +2,7 @@
 
 import Cropper from "react-easy-crop";
 import type { Area } from "react-easy-crop";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -194,18 +194,13 @@ interface CropViewProps {
   onCancel: () => void;
 }
 
+const OUTPUT_ASPECT = 1536 / 1024;
+
 function CropView({ src, onConfirm, onCancel }: CropViewProps) {
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
-  const [frameAspect, setFrameAspect] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
-
-  useEffect(() => {
-    loadImage("/CoteMasFrame.png").then((img) => {
-      setFrameAspect(img.naturalWidth / img.naturalHeight);
-    });
-  }, []);
 
   const onCropComplete = useCallback((_: Area, pixels: Area) => {
     setCroppedAreaPixels(pixels);
@@ -242,21 +237,15 @@ function CropView({ src, onConfirm, onCancel }: CropViewProps) {
 
         {/* Cropper area */}
         <div className="relative w-full h-[420px] bg-black">
-          {frameAspect !== null ? (
-            <Cropper
-              image={src}
-              crop={crop}
-              zoom={zoom}
-              aspect={frameAspect}
-              onCropChange={setCrop}
-              onZoomChange={setZoom}
-              onCropComplete={onCropComplete}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <div className="spinner" />
-            </div>
-          )}
+          <Cropper
+            image={src}
+            crop={crop}
+            zoom={zoom}
+            aspect={OUTPUT_ASPECT}
+            onCropChange={setCrop}
+            onZoomChange={setZoom}
+            onCropComplete={onCropComplete}
+          />
         </div>
 
         {/* Zoom slider */}
@@ -283,7 +272,7 @@ function CropView({ src, onConfirm, onCancel }: CropViewProps) {
       <div className="flex flex-col sm:flex-row gap-3 justify-center">
         <button
           onClick={handleConfirm}
-          disabled={confirming || frameAspect === null}
+          disabled={confirming}
           className="btn-primary"
         >
           {confirming ? "Preparing…" : "Apply Côté Mas style"}

@@ -1,16 +1,22 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI, { toFile } from "openai";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
 const RETEXTURE_PROMPT =
-  "restylize this exact photograph in the painterly style of the attached image reference. Do not add words or text of any kind.";
+  "You are given two input images. " +
+  "Image 1 is the STYLE REFERENCE: a painterly Provençal / Saint-Tropez illustration in colored-pencil and pastel texture, with a warm saturated Mediterranean palette (deep pinks, lavenders, ochre yellows, sea blues) and visible paper grain. " +
+  "Image 2 is the USER PHOTOGRAPH. Its subject, composition, framing, and proportions must be preserved exactly — do not change what it depicts or where things sit in the frame. " +
+  "Re-render image 2 in the artistic style of image 1: match its brushwork, palette, linework, and texture. Output the stylized version of image 2 only. Do not add words, captions, watermarks, signatures, or text of any kind.";
+
+const REF_PATH = path.join(process.cwd(), "public", "style-reference.jpg");
+const REF_BUFFER = fs.readFileSync(REF_PATH);
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "GEMINI_API_KEY environment variable is not set." },
+      { error: "OPENAI_API_KEY environment variable is not set." },
       { status: 500 }
     );
   }
@@ -46,59 +52,36 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const bytes = await file.arrayBuffer();
-  const base64Data = Buffer.from(bytes).toString("base64");
+  const userBuffer = Buffer.from(await file.arrayBuffer());
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-
-  // gemini-3-pro-image-preview supports multimodal input + image output
-  const model = genAI.getGenerativeModel({
-    model: "gemini-3-pro-image-preview",
-    generationConfig: {
-      // @ts-expect-error — responseModalities is a valid parameter for this model
-      responseModalities: ["Text", "Image"],
-    },
-  });
-
-  const refImagePath = path.join(process.cwd(), "public", "style-reference.jpg");
-  const refImageData = fs.readFileSync(refImagePath).toString("base64");
+  const client = new OpenAI({ apiKey });
 
   let result;
   try {
-    result = await model.generateContent([
-      { text: RETEXTURE_PROMPT },
-      {
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: refImageData,
-        },
-      },
-      {
-        inlineData: {
-          mimeType: file.type,
-          data: base64Data,
-        },
-      },
-    ]);
+    result = await client.images.edit({
+      model: "gpt-image-2-2026-04-21",
+      image: [
+        await toFile(REF_BUFFER, "style-reference.jpg", { type: "image/jpeg" }),
+        await toFile(userBuffer, "user-photo", { type: file.type }),
+      ],
+      prompt: RETEXTURE_PROMPT,
+      size: "1536x1024",
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown Gemini API error.";
-    return NextResponse.json({ error: `Gemini API error: ${message}` }, { status: 502 });
+    const message = err instanceof Error ? err.message : "Unknown OpenAI API error.";
+    return NextResponse.json({ error: `OpenAI API error: ${message}` }, { status: 502 });
   }
 
-  const parts = result.response.candidates?.[0]?.content?.parts ?? [];
-  const imagePart = parts.find((p) => p.inlineData?.mimeType?.startsWith("image/"));
-
-  if (!imagePart?.inlineData) {
-    // Surface any text the model returned for debugging
-    const textPart = parts.find((p) => p.text)?.text ?? "No image returned.";
+  const b64 = result.data?.[0]?.b64_json;
+  if (!b64) {
     return NextResponse.json(
-      { error: `Retexturing failed: ${textPart}` },
+      { error: "Retexturing failed: no image returned." },
       { status: 500 }
     );
   }
 
   return NextResponse.json({
-    image: imagePart.inlineData.data,
-    mimeType: imagePart.inlineData.mimeType,
+    image: b64,
+    mimeType: "image/png",
   });
 }
