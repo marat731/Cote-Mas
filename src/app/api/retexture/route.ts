@@ -9,7 +9,7 @@ const RETEXTURE_PROMPT =
   "Image 2 is the USER PHOTOGRAPH. Its subject, composition, framing, and proportions must be preserved exactly — do not change what it depicts or where things sit in the frame. " +
   "Re-render image 2 in the artistic style of image 1: match its brushwork, palette, linework, and texture. Output the stylized version of image 2 only. Do not add words, captions, watermarks, signatures, or text of any kind.";
 
-const REF_PATH = path.join(process.cwd(), "public", "style-reference.jpg");
+const REF_PATH = path.join(process.cwd(), "public", "style-reference.png");
 const REF_BUFFER = fs.readFileSync(REF_PATH);
 
 export async function POST(request: NextRequest) {
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     result = await client.images.edit({
       model: "gpt-image-2-2026-04-21",
       image: [
-        await toFile(REF_BUFFER, "style-reference.jpg", { type: "image/jpeg" }),
+        await toFile(REF_BUFFER, "style-reference.png", { type: "image/png" }),
         await toFile(userBuffer, "user-photo", { type: file.type }),
       ],
       prompt: RETEXTURE_PROMPT,
